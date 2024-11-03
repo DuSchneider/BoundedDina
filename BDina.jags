@@ -1,0 +1,32 @@
+model{
+ for (i in 1:N) {
+  for (j in 1:J) {
+    for (k in 1:K) {w[i, j, k] <- pow(alpha[i, k], Q[j, k])}
+    eta[i, j] <- prod(w[i, j, 1:K])
+    u[i, j] <- ifelse(eta[i,j]==1, u1[j], u0[j])
+    phif[i, j] <- ifelse(eta[i,j]==1, phi1[j], phi0[j])
+    p[i,j] <- u[i,j]*phif[i,j]
+    q[i,j] <- (1-u[i,j])*phif[i,j]
+    Y[i,j] ~ dbeta(p[i, j], q[i, j])
+    y[i,j] <- Y[i,j]
+    aloglik[i, j] <- dbeta(y[i,j],p[i, j], q[i, j])
+    }
+    loglik[i] <- log(prod(aloglik[i,1:J]))
+  for (k in 1:K) {alpha[i, k] <- all.patterns[c[i], k]}
+    c[i] ~ dcat(pai[1:C])}
+  pai[1:C] ~ ddirch(delta[1:C])
+
+  for (i in 1:2){
+  for (j in 1:J) {
+    muaux[i,j] ~ dbeta(1, 1)
+    }
+}
+
+  for (j in 1:J){
+     mu[1:2,j] <- sort(muaux[1:2,j])
+     u1[j] <- mu[2,j]
+     u0[j] <- mu[1,j]
+     phi0[j] ~ dgamma(0.01,0.01)
+     phi1[j] ~ dgamma(0.01,0.01)
+}
+}
