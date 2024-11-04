@@ -1,0 +1,195 @@
+---
+title: A BOUNDED COGNITIVE DIAGNOSIS MODEL TO CLASSIFICATION PROBLEMS FOR SOCIAL ECONOMICS
+  STUDY
+---
+
+```{r, message=FALSE}
+rm(list=ls())
+```
+
+Dataset and sources used in this R Markdown file can be found at https://github.com/DuSchneider/BoundedDina
+
+First, we will load the packages which will be needed for the application.
+
+```{r, message=FALSE}
+library(readxl)
+library(R2jags)
+library(coda)
+library(lattice)
+library(mcmcplots)
+library(matrixStats)
+library(loo)
+library(AICcmodavg)
+library(BayesTwin)
+library(distrEx)
+```
+
+## Dataset
+
+Now, we will read the prepared dataset with social indicators from Brazil, that also contains the Q-Matrix information. The sheet which will be loaded is MUN10_final. This sheet contains the data used in the application, already with treatment for variables DEP, ILIT, GINI, PPOV, INC1, UNEM, SANI, ELPOV, CHILD, HEAD, WORKS, which are the original value subtracted from 1, to assure that all the items are increasingly related to the possessing of the evaluated dimensions.
+
+```{r, echo=FALSE}
+data_orig <- read.csv("https://raw.githubusercontent.com/DuSchneider/BoundedDina/main/atlas_dataset.csv",
+                 header=TRUE) 
+
+```
+
+With the loaded data, we will select only the complete cases and the states from Southeast region.
+
+```{r}
+datacompletetotal <- as.data.frame(data_orig[complete.cases(data_orig),])
+datacomplete <-  subset(datacompletetotal, UF %in% c(31,32,33,35))
+
+summary(datacomplete)
+```
+
+Now, we transform data so it does not contain values 0 or 1, adjusting 0 to 0.005 and 1 to 0.995.
+
+```{r}
+
+for (i in 1:nrow(datacomplete))
+{
+  datacomplete$T_DES18M[i]  = ifelse(datacomplete$T_DES18M[i] >0.995,0.995,datacomplete$T_DES18M[i])
+  datacomplete$T_BANAGUA[i]  = ifelse(datacomplete$T_BANAGUA[i] >0.995,0.995,datacomplete$T_BANAGUA[i])
+  datacomplete$T_LIXO[i]  = ifelse(datacomplete$T_LIXO[i] > 0.995,0.995,datacomplete$T_LIXO[i])
+  datacomplete$T_LIXO[i]  = ifelse(datacomplete$T_LIXO[i] < 0.005,0.005,datacomplete$T_LIXO[i])
+  datacomplete$T_LUZ[i]  = ifelse(datacomplete$T_LUZ[i] > 0.995,0.995,datacomplete$T_LUZ[i])
+  datacomplete$AGUA_ESGOTO[i]  = ifelse(datacomplete$AGUA_ESGOTO[i] > 0.995,0.995,datacomplete$AGUA_ESGOTO[i])
+  datacomplete$T_M10A17CF[i]  = ifelse(datacomplete$T_M10A17CF[i] > 0.995,0.995,datacomplete$T_M10A17CF[i])
+  datacomplete$T_MULCHEFEFIF014[i]  = ifelse(datacomplete$T_MULCHEFEFIF014[i] > 0.995,0.995,datacomplete$T_MULCHEFEFIF014[i])
+  datacomplete$T_NESTUDA_NTRAB_MMEIO[i]  = ifelse(datacomplete$T_NESTUDA_NTRAB_MMEIO[i] > 0.995,0.995,datacomplete$T_NESTUDA_NTRAB_MMEIO[i])
+}
+
+datac <- datacomplete[,6:ncol(datacomplete)]
+```
+
+Once the data is loaded and treated, now we need to load the Q-Matrix and setup the profiles matrix so it can be filled after the parameters are calculated.
+
+```{r}
+qmatrix <- read.csv("https://raw.githubusercontent.com/DuSchneider/BoundedDina/main/q_matrix.csv",
+                    header=FALSE) 
+
+
+Q <- as.matrix(qmatrix)
+
+N=nrow(datac) 
+J=ncol(datac) 
+K=ncol(Q) 
+C=2^K 
+delta0 <- rep(1,2^K) #vector with size of possible profiles
+
+#Matrix containing all possible profiles
+As <- rep(0,K)
+for(j in 1:K){
+  temp <- combn(1:K,m=j)
+  tempmat <- matrix(0,ncol(temp),K)
+  for(j in 1:ncol(temp))
+    tempmat[j,temp[,j]] <- 1
+  As <- rbind(As,tempmat)
+}
+As <- as.matrix(As)
+```
+
+Now we will run the JAGS procedure to adjust the B-DINA parameters.
+
+```{r}
+para <- c("u0", "phi0", "phi1", "pai", "u1","loglik","c")
+data <- list(Y=datac, N=N, J=J, K=K, 
+             C=C, Q=Q, all.patterns=As, delta=delta0)
+
+model_url <- "https://raw.githubusercontent.com/DuSchneider/BoundedDina/main/BDina.jags"
+temp_file <- tempfile(fileext = "Bounded_Dina.jags")
+download.file(model_url, temp_file)
+
+
+start_time <- proc.time()
+jagsfit <- jags.parallel(data, inits=NULL, para, temp_file, n.chains=2, n.iter = 25000, 
+                         n.burnin = 5000, n.thin=1, jags.seed = 123)
+end_time <- proc.time()
+jags_time <- end_time-start_time
+```
+
+Once the parameters are adjusted, we will obtain the Tables containing their values.
+
+```{r}
+matrixmc <- jagsfit$BUGSoutput$sims.matrix
+results <- jagsfit$BUGSoutput$summary
+
+pai_jags <- results[c((2*N+2):(2*N+C+1)),1]
+phi0_jags <- results[c((2*N+C+2):(2*N+C+J+1)),1]
+phi1_jags <- results[c((2*N+C+J+2):(2*N+C+2*J+1)),1]
+u0_jags <- results[c((2*N+C+2*J+2):(2*N+C+3*J+1)),1]
+u1_jags <- results[c((2*N+C+3*J+2):(2*N+C+4*J+1)),1]
+
+sdpai_jags <- results[c((2*N+2):(2*N+C+1)),2]
+sdphi0_jags <- results[c((2*N+C+2):(2*N+C+J+1)),2]
+sdphi1_jags <- results[c((2*N+C+J+2):(2*N+C+2*J+1)),2]
+sdu0_jags <- results[c((2*N+C+2*J+2):(2*N+C+3*J+1)),2]
+sdu1_jags <- results[c((2*N+C+3*J+2):(2*N+C+4*J+1)),2]
+
+pai_jagsqi <- results[c((2*N+2):(2*N+C+1)),3]
+phi0_jagsqi <- results[c((2*N+C+2):(2*N+C+J+1)),3]
+phi1_jagsqi <- results[c((2*N+C+J+2):(2*N+C+2*J+1)),3]
+u0_jagsqi <- results[c((2*N+C+2*J+2):(2*N+C+3*J+1)),3]
+u1_jagsqi <- results[c((2*N+C+3*J+2):(2*N+C+4*J+1)),3]
+
+pai_jagsqu <- results[c((2*N+2):(2*N+C+1)),7]
+phi0_jagsqu <- results[c((2*N+C+2):(2*N+C+J+1)),7]
+phi1_jagsqu <- results[c((2*N+C+J+2):(2*N+C+2*J+1)),7]
+u0_jagsqu <- results[c((2*N+C+2*J+2):(2*N+C+3*J+1)),7]
+u1_jagsqu <- results[c((2*N+C+3*J+2):(2*N+C+4*J+1)),7]
+
+```
+
+With these results, it is possible to calculate KS, Hellinger Distance and Lambdas.
+
+```{r}
+lambda <- u1_jags - u0_jags
+lambda
+
+p0 <- u0_jags*phi0_jags
+q0 <- (1-u0_jags)*phi0_jags
+
+p1 <- u1_jags*phi1_jags
+q1 <- (1-u1_jags)*phi1_jags
+
+KSRes <- NULL
+HRes <- NULL
+
+for (i in 1:nrow(Q))
+{
+  HRes[i] <- HellingerDist(Beta(p0[i], q0[i]), 
+                           Beta(p1[i], q1[i])) 
+  KSRes[i] <- KolmogorovDist(Beta(p0[i], q0[i]), 
+                             Beta(p1[i], q1[i])) 
+}
+```
+
+With all of the results ready, we can build Tables 8 and 9 from the paper.
+
+```{r}
+
+table8_1 <- round(data.frame(u0_jags,sqrt(phi0_jags),u1_jags,sqrt(phi1_jags)),3)
+table8_2 <- round(data.frame(KSRes,HRes),2)
+table8_3 <- round(data.frame(lambda),3)
+table8 <- data.frame(table8_1,table8_2,table8_3)
+
+Sys.setlocale(category = "LC_ALL", locale = "Greek")
+colnames(table8) <- c("μ0","sqrt(φ0)","μ1","sqrt(φ1)",
+                      "KS","m","λ")
+rownames(table8) <- c("DEP", "S60", "ILIT", "HIGH", "GINI", "PPOV", "INC1",
+                      "UNEM", "BWAT", "GARB", "LIGHT", "SANI", "ELPOV",
+                      "CHILD", "HEAD", "WORKS", "HDIE", "HDIH", "HDIS")
+  
+table9 <- round(data.frame(As,pai_jags,pai_jagsqi,pai_jagsqu),3)
+
+colnames(table9) <- c("α1","α2","α3","Mean","HPD 0.025", "HPD 0.975")
+rownames(table9) <- c("None positive","Positive Economy","Positive Health",
+                      "Positive Education","Positive Economy and Health",
+                      "Positive Economy and Education","Positive Health and Economy",
+                      "All Positivo")
+table8
+table9
+
+
+```
